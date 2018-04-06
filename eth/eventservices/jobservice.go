@@ -64,6 +64,7 @@ func (s *JobService) Start(ctx context.Context) error {
 			return false, err
 		}
 
+		s.node.Database.SetLastSeenBlock(job.CreationBlock)
 		assignedAddr, err := s.node.Eth.AssignedTranscoder(jid)
 		if err != nil {
 			glog.Errorf("Error checking for assignment: %v", err)

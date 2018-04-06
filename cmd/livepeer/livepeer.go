@@ -134,6 +134,14 @@ func main() {
 		}
 	}
 
+	//Set up DB
+	dbh, err := lpcommon.InitDB(*datadir + "/lp.sqlite3")
+	if err != nil {
+		glog.Errorf("Error opening DB", err)
+		return
+	}
+	defer dbh.Close()
+
 	//Take care of priv/pub keypair
 	priv, pub, err := getLPKeys(*datadir)
 	if err != nil {
@@ -162,7 +170,7 @@ func main() {
 		return
 	}
 
-	n, err := core.NewLivepeerNode(nil, nw, core.NodeID(nw.GetNodeID()), addrs, *datadir)
+	n, err := core.NewLivepeerNode(nil, nw, core.NodeID(nw.GetNodeID()), addrs, *datadir, dbh)
 	if err != nil {
 		glog.Errorf("Error creating livepeer node: %v", err)
 	}
