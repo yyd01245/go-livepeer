@@ -72,6 +72,12 @@ func (s *JobService) Start(ctx context.Context) error {
 		}
 
 		if assignedAddr == s.node.Eth.Account().Address {
+			dbjob := lpcommon.NewDBJob(
+				job.JobId, "0", job.StreamId, // XXX fix txid?
+				job.MaxPricePerSegment, job.TranscodingOptions,
+				job.BroadcasterAddress, s.node.Eth.Account().Address,
+				job.CreationBlock, job.EndBlock)
+			s.node.Database.InsertJob(dbjob)
 			return s.doTranscode(job)
 		} else {
 			return true, nil
