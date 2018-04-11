@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"testing"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -105,5 +106,37 @@ func TestDBVersion(t *testing.T) {
 	}
 	if dbh2 != nil {
 		dbh.Close()
+	}
+}
+
+func NewStubJob() *DBJob {
+	return &DBJob{
+		ID: 0, txID: "", streamID: "1", cost: 0, options: "",
+		broadcaster: ethcommon.Address{}, transcoder: ethcommon.Address{},
+		startBlock: 1, endBlock: 2,
+	}
+}
+
+func TestDBJobs(t *testing.T) {
+	dbh, dbraw, err := tempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	j := NewStubJob()
+	dbh.InsertJob(j)
+	j.ID = 1
+	dbh.InsertJob(j)
+	endBlock := j.endBlock
+	j.ID = 2
+	j.endBlock += 5
+	dbh.InsertJob(j)
+	jobs, err := dbh.ActiveJobs(big.NewInt(0))
+	if err != nil || len(jobs) != 3 {
+		t.Error("Unexpected error in active jobs ", err, len(jobs))
+		return
+	}
+	jobs, err = dbh.ActiveJobs(big.NewInt(endBlock))
+	if err != nil || len(jobs) != 1 || jobs[0].ID != 2 {
+		t.Error("Unexpected error in active jobs ", err, len(jobs))
+		return
 	}
 }
