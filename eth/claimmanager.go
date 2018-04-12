@@ -12,6 +12,7 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/golang/glog"
+	"github.com/livepeer/go-livepeer/common"
 	ethTypes "github.com/livepeer/go-livepeer/eth/types"
 	"github.com/livepeer/go-livepeer/ipfs"
 	ffmpeg "github.com/livepeer/lpms/ffmpeg"
@@ -22,7 +23,7 @@ var (
 )
 
 type ClaimManager interface {
-	AddReceipt(seqNo int64, bData []byte, bSig []byte, tData map[ffmpeg.VideoProfile][]byte) error
+	AddReceipt(seqNo int64, bData []byte, bSig []byte, tData map[ffmpeg.VideoProfile][]byte, tStart time.Time, tEnd time.Time) error
 	SufficientBroadcasterDeposit() (bool, error)
 	ClaimVerifyAndDistributeFees() error
 	CanClaim() (bool, error)
@@ -35,13 +36,14 @@ type claimData struct {
 	segData              []byte
 	dataHash             []byte
 	bSig                 []byte
-	transcodeProof       []byte
 	claimConcatTDatahash []byte
+	transcodeProof       []byte
 }
 
 //BasicClaimManager manages the claim process for a Livepeer transcoder.  Check the Livepeer protocol for more details.
 type BasicClaimManager struct {
 	client LivepeerEthClient
+	db     *common.DB
 	ipfs   ipfs.IpfsApi
 
 	strmID   string
@@ -62,7 +64,7 @@ type BasicClaimManager struct {
 }
 
 //NewBasicClaimManager creates a new claim manager.
-func NewBasicClaimManager(sid string, jid *big.Int, broadcaster ethcommon.Address, pricePerSegment *big.Int, p []ffmpeg.VideoProfile, c LivepeerEthClient, ipfs ipfs.IpfsApi) *BasicClaimManager {
+func NewBasicClaimManager(sid string, jid *big.Int, broadcaster ethcommon.Address, pricePerSegment *big.Int, p []ffmpeg.VideoProfile, c LivepeerEthClient, ipfs ipfs.IpfsApi, db *common.DB) *BasicClaimManager {
 	seqNos := make([][]int64, len(p), len(p))
 	rHashes := make([][]ethcommon.Hash, len(p), len(p))
 	sd := make([][][]byte, len(p), len(p))
@@ -90,6 +92,7 @@ func NewBasicClaimManager(sid string, jid *big.Int, broadcaster ethcommon.Addres
 
 	return &BasicClaimManager{
 		client:          c,
+		db:              db,
 		ipfs:            ipfs,
 		strmID:          sid,
 		jobID:           jid,
@@ -140,7 +143,7 @@ func (c *BasicClaimManager) DidFirstClaim() bool {
 
 //AddReceipt adds a claim for a given video segment.
 func (c *BasicClaimManager) AddReceipt(seqNo int64, bData []byte, bSig []byte,
-	tData map[ffmpeg.VideoProfile][]byte) error {
+	tData map[ffmpeg.VideoProfile][]byte, tStart time.Time, tEnd time.Time) error {
 
 	_, ok := c.segClaimMap[seqNo]
 	if ok {
@@ -179,6 +182,7 @@ func (c *BasicClaimManager) AddReceipt(seqNo int64, bData []byte, bSig []byte,
 	c.unclaimedSegs[seqNo] = true
 	// glog.Infof("Added %v. unclaimSegs: %v", seqNo, c.unclaimedSegs)
 
+	c.db.InsertReceipt(c.jobID, seqNo, bHash, bSig, tHash, tStart, tEnd)
 	return nil
 }
 
