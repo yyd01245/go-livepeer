@@ -17,11 +17,15 @@ type DB struct {
 	dbh *sql.DB
 
 	// prepared statements
-	updateKV   *sql.Stmt
-	insertJob  *sql.Stmt
-	selectJobs *sql.Stmt
-	stopReason *sql.Stmt
-	insertRec  *sql.Stmt
+	updateKV          *sql.Stmt
+	insertJob         *sql.Stmt
+	selectJobs        *sql.Stmt
+	stopReason        *sql.Stmt
+	insertRec         *sql.Stmt
+	insertClaim       *sql.Stmt
+	setClaim          *sql.Stmt
+	setClaimStatus    *sql.Stmt
+	unclaimedReceipts *sql.Stmt
 }
 
 type DBJob struct {
@@ -67,6 +71,7 @@ var schema = `
 
 	CREATE TABLE IF NOT EXISTS receipts (
 		jobID INTEGER NOT NULL,
+		claimID INTEGER,
 		seqNo INTEGER NOT NULL,
 		bcastHash STRING,
 		bcastSig STRING,
@@ -75,7 +80,17 @@ var schema = `
 		transcodeEndedAt STRING,
 		errorMsg STRING DEFAULT NULL,
 		PRIMARY KEY(jobID, seqNo),
-		FOREIGN KEY(jobID) REFERENCES jobs(id)
+		FOREIGN KEY(jobID) REFERENCES jobs(id),
+		FOREIGN KEY(claimID) REFERENCES claims(id)
+	);
+
+	CREATE TABLE IF NOT EXISTS claims (
+		id INTEGER PRIMARY KEY,
+		claimRoot STRING,
+		claimBlock INTEGER,
+		claimedAt STRING DEFAULT CURRENT_TIMESTAMP,
+		updatedAt STRING,
+		status STRING DEFAULT 'Submitted'
 	);
 `
 
@@ -155,6 +170,30 @@ func InitDB(dbPath string) (*DB, error) {
 	}
 	d.insertRec = stmt
 
+	// Claim related prepared statements
+	stmt, err = db.Prepare("INSERT INTO claims(id, claimRoot) VALUES(?, ?)")
+	if err != nil {
+		glog.Error("Unable to prepare insert claims ", err)
+		d.Close()
+		return nil, err
+	}
+	d.insertClaim = stmt
+	stmt, err = db.Prepare("UPDATE receipts SET claimID = ? WHERE seqNo BETWEEN ? AND ?")
+	if err != nil {
+		glog.Error("Unable to prepare setclaimid ", err)
+		d.Close()
+		return nil, err
+	}
+	d.setClaim = stmt
+
+	stmt, err = db.Prepare("UPDATE claims SET status = ?, updatedAt = datetime() WHERE id = ?")
+	if err != nil {
+		glog.Error("Unable to prepare  setclaimstatus ", err)
+		d.Close()
+		return nil, err
+	}
+	d.setClaimStatus = stmt
+
 	// Check for correct DB version and upgrade if needed
 	var dbVersion int
 	row := db.QueryRow("SELECT value FROM kv WHERE key = 'dbVersion'")
@@ -195,6 +234,15 @@ func (db *DB) Close() {
 	}
 	if db.insertRec != nil {
 		db.insertRec.Close()
+	}
+	if db.insertClaim != nil {
+		db.insertClaim.Close()
+	}
+	if db.setClaim != nil {
+		db.setClaim.Close()
+	}
+	if db.setClaimStatus != nil {
+		db.setClaimStatus.Close()
 	}
 	if db.dbh != nil {
 		db.dbh.Close()
@@ -285,6 +333,57 @@ func (db *DB) InsertReceipt(jobID *big.Int, seqNo int64,
 		time2str(tcodeStartedAt), time2str(tcodeEndedAt))
 	if err != nil {
 		glog.Error("db: Error inserting segment ", jobID, err)
+		return err
+	}
+	return nil
+}
+
+func (db *DB) InsertClaim(claimID *big.Int, segRange [2]*big.Int, root [32]byte) error {
+	if db == nil {
+		return nil
+	}
+	tx, err := db.dbh.Begin()
+	if err != nil {
+		glog.Error("Unable to begin tx ", err)
+		return err
+	}
+	insert := tx.Stmt(db.insertClaim)
+	update := tx.Stmt(db.setClaim)
+	res, err := insert.Exec(claimID.Int64(), ethcommon.ToHex(root[:]))
+	if err != nil {
+		glog.Error("Unable to insert claim ", err)
+		tx.Rollback()
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		glog.Error("Unable to get last ID ", err)
+		tx.Rollback()
+		return err
+	}
+	_, err = update.Exec(id, segRange[0].Int64, segRange[1].Int64)
+	if err != nil {
+		glog.Error("Unable to update segments with claims ", err)
+		tx.Rollback()
+		return err
+	}
+	err = tx.Commit()
+	if err != nil {
+		glog.Error("Unable to commit tx ", err)
+		tx.Rollback()
+		return err
+	}
+	return nil
+}
+
+func (db *DB) SetClaimStatus(id *big.Int, status string) error {
+	if db == nil {
+		return nil
+	}
+	glog.V(DEBUG).Infof("db: Setting ClaimStatus for %v to %v", id, status)
+	_, err := db.setClaimStatus.Exec(status, id.Int64())
+	if err != nil {
+		glog.Error("db: Error setting claim status ", id, err)
 		return err
 	}
 	return nil

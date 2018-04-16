@@ -297,8 +297,11 @@ func (c *BasicClaimManager) ClaimVerifyAndDistributeFees() error {
 
 		claim, err := c.client.GetClaim(c.jobID, big.NewInt(c.claims-1))
 		if err != nil {
+			glog.Errorf("Could not get claim: %v", err)
 			return err
 		}
+
+		c.db.InsertClaim(claim.ClaimId, bigRange, root.Hash)
 
 		//Record proofs for each segment in case the segment needs to be verified
 		for i := segRange[0]; i <= segRange[1]; i++ {
@@ -311,6 +314,7 @@ func (c *BasicClaimManager) ClaimVerifyAndDistributeFees() error {
 			b, err := c.client.Backend()
 			if err != nil {
 				glog.Error(err)
+				c.db.SetClaimStatus(claim.ClaimId, "FAIL Unable to get backend: "+err.Error())
 				return
 			}
 
@@ -378,16 +382,19 @@ func (c *BasicClaimManager) verify(claimID *big.Int, claimBlkNum int64, plusOneB
 func (c *BasicClaimManager) distributeFees(claimID *big.Int) error {
 	verificationPeriod, err := c.client.VerificationPeriod()
 	if err != nil {
+		c.db.SetClaimStatus(claimID, "FAIL Verification period "+err.Error())
 		return err
 	}
 
 	slashingPeriod, err := c.client.VerificationSlashingPeriod()
 	if err != nil {
+		c.db.SetClaimStatus(claimID, "FAIL Slashing period "+err.Error())
 		return err
 	}
 
 	b, err := c.client.Backend()
 	if err != nil {
+		c.db.SetClaimStatus(claimID, "FAIL Distribute backend "+err.Error())
 		return err
 	}
 
@@ -395,15 +402,18 @@ func (c *BasicClaimManager) distributeFees(claimID *big.Int) error {
 
 	tx, err := c.client.DistributeFees(c.jobID, claimID)
 	if err != nil {
+		c.db.SetClaimStatus(claimID, "FAIL Submit distribute "+err.Error())
 		return err
 	}
 
 	err = c.client.CheckTx(tx)
 	if err != nil {
+		c.db.SetClaimStatus(claimID, "FAIL Check distribute txn "+err.Error())
 		return err
 	}
 
 	glog.Infof("Distributed fees for job %v claim %v", c.jobID, claimID)
+	c.db.SetClaimStatus(claimID, "Complete")
 
 	return nil
 }
