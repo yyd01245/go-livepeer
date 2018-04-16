@@ -189,6 +189,33 @@ func (s *JobService) doTranscode(job *lpTypes.Job) (bool, error) {
 	return true, nil
 }
 
+func (s *JobService) RestartTranscoder() error {
+	blknum, err := s.node.Eth.LatestBlockNum()
+	if err != nil {
+		return err
+	}
+	// fetch active jobs
+	jobs, err := s.node.Database.ActiveJobs(blknum)
+	if err != nil {
+		glog.Error("Could not fetch active jobs ", err)
+		return err
+	}
+	for _, j := range jobs {
+		job, err := s.node.Eth.GetJob(big.NewInt(j.ID)) // benchmark; may be faster to reconstruct locally?
+		if err != nil {
+			glog.Error("Unable to get job for ", j.ID, err)
+			continue
+		}
+		res, err := s.doTranscode(job)
+		if !res || err != nil {
+			glog.Error("Unable to restore transcoding of ", j.ID, err)
+			continue
+		}
+	}
+	return nil
+}
+
+
 func txDataToVideoProfile(txData string) ([]ffmpeg.VideoProfile, error) {
 	profiles := make([]ffmpeg.VideoProfile, 0)
 

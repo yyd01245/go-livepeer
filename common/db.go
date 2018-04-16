@@ -16,8 +16,9 @@ type DB struct {
 	dbh *sql.DB
 
 	// prepared statements
-	updateKV  *sql.Stmt
-	insertJob *sql.Stmt
+	updateKV   *sql.Stmt
+	insertJob  *sql.Stmt
+	selectJobs *sql.Stmt
 }
 
 type DBJob struct {
@@ -108,6 +109,15 @@ func InitDB(dbPath string) (*DB, error) {
 	}
 	d.insertJob = stmt
 
+	// select all jobs since
+	stmt, err = db.Prepare("SELECT id, txID, streamID, segmentCost, transcodeOptions, broadcaster, transcoder, startBlock, endBlock FROM jobs WHERE endBlock > ?")
+	if err != nil {
+		glog.Error("Unable to prepare selectjob stmt ", err)
+		d.Close()
+		return nil, err
+	}
+	d.selectJobs = stmt
+
 	// Check for correct DB version and upgrade if needed
 	var dbVersion int
 	row := db.QueryRow("SELECT value FROM kv WHERE key = 'dbVersion'")
@@ -140,6 +150,9 @@ func (db *DB) Close() {
 	if db.insertJob != nil {
 		db.insertJob.Close()
 	}
+	if db.selectJobs != nil {
+		db.selectJobs.Close()
+	}
 	if db.dbh != nil {
 		db.dbh.Close()
 	}
@@ -171,4 +184,31 @@ func (db *DB) InsertJob(job *DBJob) error {
 		glog.Error("db: Unable to insert job ", err)
 	}
 	return err
+}
+
+func (db *DB) ActiveJobs(since *big.Int) ([]*DBJob, error) {
+	if db == nil {
+		return []*DBJob{}, nil
+	}
+	glog.V(DEBUG).Info("db: Querying active jobs since ", since)
+	rows, err := db.selectJobs.Query(since.Int64())
+	if err != nil {
+		glog.Error("db: Unable to select jobs ", err)
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := []*DBJob{}
+	for rows.Next() {
+		var job DBJob
+		var transcoder string
+		var broadcaster string
+		if err := rows.Scan(&job.ID, &job.txID, &job.streamID, &job.cost, &job.options, &broadcaster, &transcoder, &job.startBlock, &job.endBlock); err != nil {
+			glog.Error("db: Unable to fetch job ", err)
+			continue
+		}
+		job.transcoder = ethcommon.HexToAddress(transcoder)
+		job.broadcaster = ethcommon.HexToAddress(broadcaster)
+		jobs = append(jobs, &job)
+	}
+	return jobs, nil
 }
