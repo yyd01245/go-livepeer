@@ -41,7 +41,7 @@ var schema = `
 	CREATE TABLE IF NOT EXISTS kv (
 		key STRING PRIMARY KEY,
 		value STRING,
-		updated_at STRING DEFAULT CURRENT_TIMESTAMP
+		updatedAt STRING DEFAULT CURRENT_TIMESTAMP
 	);
 	INSERT OR IGNORE INTO kv(key, value) VALUES('dbVersion', '{{ . }}');
 	INSERT OR IGNORE INTO kv(key, value) VALUES('lastBlock', '0');
@@ -92,7 +92,7 @@ func InitDB(dbPath string) (*DB, error) {
 	}
 
 	// updateKV prepared statement
-	stmt, err := db.Prepare("UPDATE kv SET value=?, updated_at = datetime() WHERE key=?")
+	stmt, err := db.Prepare("UPDATE kv SET value=?, updatedAt = datetime() WHERE key=?")
 	if err != nil {
 		glog.Error("Unable to prepare updatekv stmt ", err)
 		d.Close()
