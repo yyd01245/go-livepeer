@@ -41,6 +41,14 @@ type DBJob struct {
 	stopReason  string
 }
 
+type DBReceipt struct {
+	jobID     int64
+	seqNo     string
+	bcastHash []byte
+	bcastSig  []byte
+	tcodeHash []byte
+}
+
 var LivepeerDBVersion = 1
 
 var ErrDBTooNew = errors.New("DB Too New")
@@ -170,6 +178,14 @@ func InitDB(dbPath string) (*DB, error) {
 	}
 	d.insertRec = stmt
 
+	// Recover receipt prepared statement
+	stmt, err = db.Prepare("SELECT jobID, seqNo, bcastHash, bcastSig, transcodedHash FROM receipts WHERE claimID IS NULL and errorMsg IS NULL")
+	if err != nil {
+		glog.Error("Unable to prepare unclaimed receipts", err)
+		d.Close()
+	}
+	d.unclaimedReceipts = stmt
+
 	// Claim related prepared statements
 	stmt, err = db.Prepare("INSERT INTO claims(id, claimRoot) VALUES(?, ?)")
 	if err != nil {
@@ -234,6 +250,9 @@ func (db *DB) Close() {
 	}
 	if db.insertRec != nil {
 		db.insertRec.Close()
+	}
+	if db.unclaimedReceipts != nil {
+		db.unclaimedReceipts.Close()
 	}
 	if db.insertClaim != nil {
 		db.insertClaim.Close()
@@ -336,6 +355,34 @@ func (db *DB) InsertReceipt(jobID *big.Int, seqNo int64,
 		return err
 	}
 	return nil
+}
+func (db *DB) UnclaimedReceipts() (map[int64][]*DBReceipt, error) {
+	receipts := make(map[int64][]*DBReceipt)
+	if db == nil {
+		return receipts, nil
+	}
+	glog.V(DEBUG).Info("db: Querying unclaimed receipts")
+	rows, err := db.unclaimedReceipts.Query()
+	defer rows.Close()
+	if err != nil {
+		glog.Error("db: Unable to select receipts ", err)
+		return receipts, err
+	}
+	for rows.Next() {
+		var r DBReceipt
+		var bh string
+		var bs string
+		var th string
+		if err := rows.Scan(&r.jobID, &r.seqNo, &bh, &bs, &th); err != nil {
+			glog.Error("db: Unable to retch receipt ", err)
+			continue
+		}
+		r.bcastHash = ethcommon.FromHex(bh)
+		r.bcastSig = ethcommon.FromHex(bs)
+		r.tcodeHash = ethcommon.FromHex(th)
+		receipts[r.jobID] = append(receipts[r.jobID], &r)
+	}
+	return receipts, nil
 }
 
 func (db *DB) InsertClaim(claimID *big.Int, segRange [2]*big.Int, root [32]byte) error {
